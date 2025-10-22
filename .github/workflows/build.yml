@@ -52,7 +52,7 @@ jobs:
           username: palera1n
           password: ${{ secrets.NICKCHAN_FTP_PASS }}
           forceUpload: true
-          dryRun: false
+          dryRun: true
           localDir: 'ready/'
           remoteDir: "/palera1n/artifacts/c-rewrite/${{ steps.branch-name.outputs.ref_branch || github.ref_name }}/${{ github.run_number }}"
 
@@ -343,7 +343,7 @@ jobs:
           username: palera1n
           password: ${{ secrets.NICKCHAN_FTP_PASS }}
           forceUpload: true
-          dryRun: false
+          dryRun: true
           localDir: 'ready/'
           remoteDir: "/palera1n/artifacts/c-rewrite/${{ steps.branch-name.outputs.ref_branch || github.ref_name }}/${{ github.run_number }}"
 
@@ -515,7 +515,7 @@ jobs:
           username: palera1n
           password: ${{ secrets.NICKCHAN_FTP_PASS }}
           forceUpload: true
-          dryRun: false
+          dryRun: true
           localDir: 'ready/'
           remoteDir: "/palera1n/artifacts/c-rewrite/${{ steps.branch-name.outputs.ref_branch || github.ref_name }}/${{ github.run_number }}"
 
@@ -855,7 +855,7 @@ jobs:
           username: palera1n
           password: ${{ secrets.NICKCHAN_FTP_PASS }}
           forceUpload: true
-          dryRun: false
+          dryRun: true
           localDir: 'ready/'
           remoteDir: "/palera1n/artifacts/c-rewrite/${{ steps.branch-name.outputs.ref_branch || github.ref_name }}/${{ github.run_number }}"
 

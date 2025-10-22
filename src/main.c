@@ -27,19 +27,19 @@
 #include <ANSI-color-codes.h>
 #include <palerain.h>
 #include <xxd-embedded.h>
-#include <paleinfo.h>
+#include <kerninfo.h>
+#include <gui.h>
 
 #define CMD_LEN_MAX 512
 #define OVERRIDE_MAGIC 0xd803b376
 
 unsigned int verbose = 0;
-/* we want to write to them so don't use string literals */
-char xargs_cmd[0x270] = { 'x', 'a', 'r', 'g', 's', '\0' }, 
-	palerain_flags_cmd[0x30] = { 'd', 'e', 'a', 'd', 'b', 'e', 'e', 'f', '\0' };
+char xargs_cmd[0x270] = "xargs ", checkrain_flags_cmd[0x20] = "deadbeef", palerain_flags_cmd[0x20] = "deadbeef";
+char kpf_flags_cmd[0x20] = "deadbeef", dtpatch_cmd[0x20] = "deadbeef", rootfs_cmd[512] = "deadbeef";
 extern char** environ;
 
-niarelap_file_t* kpf_to_upload_1 = &checkra1n_kpf_pongo_lzma;
-niarelap_file_t* ramdisk_to_upload_1 = &ramdisk_dmg_lzma;
+niarelap_file_t* kpf_to_upload_1 = &checkra1n_kpf_pongo;
+niarelap_file_t* ramdisk_to_upload_1 = &ramdisk_dmg;
 niarelap_file_t* overlay_to_upload_1 = &binpack_dmg;
 
 niarelap_file_t** kpf_to_upload = &kpf_to_upload_1;
@@ -48,7 +48,7 @@ niarelap_file_t** overlay_to_upload = &overlay_to_upload_1;
 
 override_file_t override_ramdisk, override_kpf, override_overlay;
 
-uint64_t palerain_flags = 0;
+uint32_t checkrain_flags = 0, palerain_flags = 0, kpf_flags = 0;
 
 pthread_mutex_t log_mutex;
 pthread_t dfuhelper_thread, pongo_thread;
@@ -57,7 +57,7 @@ void thr_cleanup(void* ptr) {
 	*(int*)ptr = 0;
 }
 
-static int build_checks(void) {
+int build_checks(void) {
 #ifndef NO_CHECKRAIN
 #if defined(__APPLE__)
 	struct mach_header_64* c1_header = (struct mach_header_64*)&checkra1n[0];
@@ -74,7 +74,20 @@ static int build_checks(void) {
 		LOG(LOG_FATAL, "checkra1n too small");
 	}
 	if (boyermoore_horspool_memmem(&checkra1n[0], checkra1n_len, (const unsigned char *)"[ra1npoc15-part] thanks to", strlen("[ra1npoc15-part] thanks to")) != NULL) {
-		palerain_flags |= palerain_option_checkrain_is_clone;
+		host_flags |= palerain_option_checkrain_is_clone;
+	}
+#endif
+#ifndef NO_KPF
+	struct mach_header_64 *kpf_hdr = (struct mach_header_64 *)checkra1n_kpf_pongo;
+	if (kpf_hdr->magic != MH_MAGIC_64 && kpf_hdr->magic != MH_CIGAM_64) {
+		LOG(LOG_FATAL, "Broken build: Invalid kernel patchfinder: Not thin 64-bit Mach-O");
+		return -1;
+	} else if (kpf_hdr->filetype != MH_KEXT_BUNDLE) {
+		LOG(LOG_FATAL, "Broken build: Invalid kernel patchfinder: Not a kext bundle");
+		return -1;
+	} else if (kpf_hdr->cputype != CPU_TYPE_ARM64) {
+		LOG(LOG_FATAL, "Broken build: Invalid kernel patchfinder: CPU type is not arm64");
+		return -1;
 	}
 #endif
 	return 0;
@@ -90,17 +103,7 @@ void log_cb(libusb_context *ctx, enum libusb_log_level level, const char *str) {
 }
 #endif
 
-// save argc, argv, and envp for restarting
-
-int saved_argc;
-char** saved_argv;
-char** saved_envp;
-
-static int palera1n(int argc, char *argv[], char *envp[]) {
-	saved_argc = argc;
-	saved_argv = argv;
-	saved_envp = envp;
-	
+int palera1n(int argc, char *argv[]) {
 	print_credits();
 	int ret = 0;
 	pthread_mutex_init(&log_mutex, NULL);
@@ -109,9 +112,9 @@ static int palera1n(int argc, char *argv[], char *envp[]) {
 	pthread_mutex_init(&ecid_dfu_wait_mutex, NULL);
 	if ((ret = build_checks())) return ret;
 	if ((ret = optparse(argc, argv))) goto cleanup;
-	if (!(palerain_flags & palerain_option_device_info) && (palerain_flags & palerain_option_palerain_version)) goto normal_exit;
+	if (!checkrain_options_enabled(host_flags, host_option_device_info) && checkrain_options_enabled(host_flags, host_option_palerain_version)) goto normal_exit;
 #ifdef TUI
-	if ((palerain_flags & palerain_option_tui) || (isatty(STDIN_FILENO) && isatty(STDOUT_FILENO) && !(palerain_flags & palerain_option_cli))) {
+	if (checkrain_options_enabled(host_flags, host_option_tui)) {
 		ret = tui();
 		if (ret) goto cleanup;
 		else goto normal_exit;
@@ -131,28 +134,26 @@ static int palera1n(int argc, char *argv[], char *envp[]) {
 	}
 #endif
 
-	if (!(palerain_flags & palerain_option_device_info))
+	if (!checkrain_options_enabled(host_flags, host_option_device_info))
 		LOG(LOG_INFO, "Waiting for devices");
 
-	if (getenv("USBMUXD_SOCKET_ADDRESS") == NULL && access("/var/run/usbmuxd", F_OK) != 0) 
+	if (access("/var/run/usbmuxd", F_OK) != 0) 
 		LOG(LOG_WARNING, "/var/run/usbmuxd not found, normal mode device detection will not work.");
 	
 	pthread_create(&pongo_thread, NULL, pongo_helper, NULL);
 	pthread_create(&dfuhelper_thread, NULL, dfuhelper, NULL);
 	pthread_join(dfuhelper_thread, NULL);
 	set_spin(0);
-	if ((palerain_flags & (palerain_option_dfuhelper_only | 
-											  palerain_option_reboot_device  | 
-											  palerain_option_exit_recovery  | 
-											  palerain_option_enter_recovery | 
-											  palerain_option_device_info)
+	if (checkrain_options_enabled(host_flags, host_option_dfuhelper_only | 
+											  host_option_reboot_device  | 
+											  host_option_exit_recovery  | 
+											  host_option_enter_recovery | 
+											  host_option_device_info
 								 ) || device_has_booted)
 		goto normal_exit;
-	pthread_cancel(pongo_thread);
-	pthread_join(pongo_thread, NULL);
 	if (exec_checkra1n()) goto cleanup;
 
-	if ((palerain_flags & (palerain_option_pongo_exit | palerain_option_demote)))
+	if (checkrain_options_enabled(host_flags, host_option_pongo_exit | host_option_demote))
 		goto normal_exit;
 	set_spin(1);
 	sleep(2);
@@ -185,6 +186,8 @@ cleanup:
 }
 
 
-int main (int argc, char* argv[], char* envp[]) {
-	return palera1n(argc, argv, envp);
+#ifndef GUI
+int main (int argc, char* argv[]) {
+	return palera1n(argc, argv);
 }
+#endif
